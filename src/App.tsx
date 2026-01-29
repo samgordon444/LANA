@@ -9,13 +9,16 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import {
   createBoard,
   deleteBoard,
+  emptyTrash,
   fetchLinkMetadata,
   getAssetsDir,
   listBoards,
+  listTrashedBoards,
   loadBoard,
   loadChat,
   ollamaChat,
   openExternalUrl,
+  restoreBoard,
   saveBoard,
   saveChat,
   saveImage,
@@ -324,6 +327,21 @@ type Selection = {
   y0: number
   x1: number
   y1: number
+}
+
+type TrashedBoard = {
+  id: string
+  name: string
+  deletedAt: number
+}
+
+type PendingBoardDelete = {
+  id: string
+  name: string
+}
+
+type PendingTrashEmpty = {
+  pending: boolean
 }
 
 function layoutBoard(board: Board): Board {
@@ -813,6 +831,9 @@ function App() {
   const noticeTimerRef = useRef<number | null>(null)
   const [board, setBoard] = useState<Board | null>(null)
   const [boards, setBoards] = useState<BoardMeta[]>([])
+  const [trashedBoards, setTrashedBoards] = useState<TrashedBoard[]>([])
+  const [pendingBoardDelete, setPendingBoardDelete] = useState<PendingBoardDelete | null>(null)
+  const [pendingTrashEmpty, setPendingTrashEmpty] = useState<PendingTrashEmpty | null>(null)
   const [currentBoardId, setCurrentBoardId] = useState<string | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -1042,6 +1063,15 @@ function App() {
     }
   }, [])
 
+  const flashNotice = useCallback((message: string) => {
+    setUiNotice(message)
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current)
+    noticeTimerRef.current = window.setTimeout(() => {
+      noticeTimerRef.current = null
+      setUiNotice(null)
+    }, 4500)
+  }, [])
+
   const createNewBoard = useCallback(async () => {
     const listed = await listBoards()
     const name = nextUntitledName(listed)
@@ -1073,7 +1103,7 @@ function App() {
   )
 
   const removeBoard = useCallback(
-    async (boardId: string) => {
+    async (boardId: string, boardName: string) => {
       const order = sortedBoards.map((b) => b.id)
       const idx = order.indexOf(boardId)
       const nextInOrder =
@@ -1082,6 +1112,13 @@ function App() {
       await deleteBoard(boardId)
 
       setBoards(nextBoards)
+      const trashed = await listTrashedBoards()
+      setTrashedBoards(
+        trashed
+          .filter((b) => typeof b.deletedAt === 'number')
+          .map((b) => ({ id: b.id, name: b.name, deletedAt: b.deletedAt as number })),
+      )
+      flashNotice('Board moved to Trash.')
       setRecentBoardIds((prev) => {
         const filtered = prev.filter((id) => id !== boardId)
         writeRecentBoards(filtered)
@@ -1102,8 +1139,50 @@ function App() {
       setBoards([created])
       await loadBoardById(created.id)
     },
-    [boards, createBoard, currentBoardId, loadBoardById, sortedBoards],
+    [boards, createBoard, currentBoardId, flashNotice, loadBoardById, sortedBoards],
   )
+
+  const confirmBoardDelete = useCallback(async () => {
+    if (!pendingBoardDelete) return
+    const { id, name } = pendingBoardDelete
+    setPendingBoardDelete(null)
+    await removeBoard(id, name)
+  }, [pendingBoardDelete, removeBoard])
+
+  const cancelBoardDelete = useCallback(() => {
+    setPendingBoardDelete(null)
+  }, [])
+
+  const restoreTrashedBoard = useCallback(
+    async (trashed: TrashedBoard) => {
+      await restoreBoard(trashed.id)
+      const [listed, trash] = await Promise.all([listBoards(), listTrashedBoards()])
+      setBoards(listed)
+      setTrashedBoards(
+        trash
+          .filter((b) => typeof b.deletedAt === 'number')
+          .map((b) => ({ id: b.id, name: b.name, deletedAt: b.deletedAt as number })),
+      )
+      flashNotice(`Restored "${trashed.name}".`)
+      await loadBoardById(trashed.id)
+    },
+    [flashNotice, loadBoardById],
+  )
+
+  const handleEmptyTrash = useCallback(async () => {
+    await emptyTrash()
+    setTrashedBoards([])
+    flashNotice('Trash emptied.')
+  }, [flashNotice])
+
+  const confirmEmptyTrash = useCallback(async () => {
+    setPendingTrashEmpty(null)
+    await handleEmptyTrash()
+  }, [handleEmptyTrash])
+
+  const cancelEmptyTrash = useCallback(() => {
+    setPendingTrashEmpty(null)
+  }, [])
 
   const columnTitleKey = useMemo(() => {
     if (!board) return ''
@@ -1199,15 +1278,6 @@ function App() {
       // ignore
     }
   }, [theme])
-
-  const flashNotice = useCallback((message: string) => {
-    setUiNotice(message)
-    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current)
-    noticeTimerRef.current = window.setTimeout(() => {
-      noticeTimerRef.current = null
-      setUiNotice(null)
-    }, 4500)
-  }, [loadBoardById])
 
   function setColumnSelectionIds(next: string[]) {
     selectedColumnIdsRef.current = next
@@ -2163,7 +2233,7 @@ function App() {
 
     ;(async () => {
       try {
-        const listed = await listBoards()
+        const [listed, trashed] = await Promise.all([listBoards(), listTrashedBoards()])
         if (cancelled) return
         let nextBoards = listed
         if (!nextBoards.length) {
@@ -2174,6 +2244,11 @@ function App() {
         const storedLastId = readLastBoardId()
         const validLastId = storedLastId && nextBoards.some((b) => b.id === storedLastId) ? storedLastId : null
         setBoards(nextBoards)
+        setTrashedBoards(
+          trashed
+            .filter((b) => typeof b.deletedAt === 'number')
+            .map((b) => ({ id: b.id, name: b.name, deletedAt: b.deletedAt as number })),
+        )
         setRecentBoardIds((prev) => {
           const filtered = prev.filter((id) => nextBoards.some((b) => b.id === id))
           writeRecentBoards(filtered)
@@ -3308,7 +3383,12 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
   return (
     <div className={`app${isChatOpen ? ' app--chat-open' : ''}`}>
       <div className={`drawer${isDrawerOpen ? ' drawer--open' : ''}`}>
-        <div className="drawerHeader">Boards</div>
+        <div className="drawerHeaderRow">
+          <div className="drawerHeader">Boards</div>
+          <button className="btn drawerNew" onClick={() => void createNewBoard()} type="button">
+            New board
+          </button>
+        </div>
         <div className="drawerList">
           {sortedBoards.map((item) => (
             <div
@@ -3326,7 +3406,7 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
                 className="drawerDelete"
                 onClick={(e) => {
                   e.stopPropagation()
-                  void removeBoard(item.id)
+                  setPendingBoardDelete({ id: item.id, name: item.name })
                 }}
                 aria-label={`Delete board ${item.name}`}
                 type="button"
@@ -3336,9 +3416,38 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
             </div>
           ))}
         </div>
-        <button className="btn drawerNew" onClick={() => void createNewBoard()} type="button">
-          New board
-        </button>
+        {trashedBoards.length ? (
+          <div className="drawerTrash">
+            <div className="drawerTrashHeader">
+              <div className="drawerTrashTitle">Trash</div>
+              <button
+                className="drawerTrashAction"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setPendingTrashEmpty({ pending: true })
+                }}
+                type="button"
+              >
+                Empty
+              </button>
+            </div>
+            {trashedBoards.map((item) => (
+              <div key={item.id} className="drawerTrashItem">
+                <div className="drawerTrashName">{item.name}</div>
+                <button
+                  className="drawerRestore"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void restoreTrashedBoard(item)
+                  }}
+                  type="button"
+                >
+                  Restore
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
       {isDrawerOpen ? (
         <button
@@ -4907,6 +5016,59 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
           />
         </div>
       </div>
+      {pendingBoardDelete ? (
+        <div className="modalOverlay" role="presentation" onClick={cancelBoardDelete}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-board-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modalTitle" id="delete-board-title">
+              Delete board?
+            </div>
+            <div className="modalBody">
+              This will move &quot;{pendingBoardDelete.name}&quot; to Trash. Deleted boards can be restored from the
+              trash until the trash is emptied.
+            </div>
+            <div className="modalActions">
+              <button className="btn" onClick={cancelBoardDelete} type="button">
+                Cancel
+              </button>
+              <button className="btn btn--danger" onClick={() => void confirmBoardDelete()} type="button">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {pendingTrashEmpty ? (
+        <div className="modalOverlay" role="presentation" onClick={cancelEmptyTrash}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="empty-trash-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modalTitle" id="empty-trash-title">
+              Empty trash?
+            </div>
+            <div className="modalBody">
+              Boards in the trash will be deleted permanently. This cannot be undone. Are you sure?
+            </div>
+            <div className="modalActions">
+              <button className="btn" onClick={cancelEmptyTrash} type="button">
+                Cancel
+              </button>
+              <button className="btn btn--danger" onClick={() => void confirmEmptyTrash()} type="button">
+                Empty
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

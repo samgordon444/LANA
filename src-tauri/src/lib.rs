@@ -11,8 +11,11 @@ pub fn run() {
   tauri::Builder::default()
     .invoke_handler(tauri::generate_handler![
       list_boards,
+      list_trashed_boards,
       create_board,
       delete_board,
+      empty_trash,
+      restore_board,
       fetch_link_metadata,
       ollama_chat,
       load_chat,
@@ -134,6 +137,8 @@ struct BoardMeta {
   name: String,
   #[serde(rename = "updatedAt")]
   updated_at: i64,
+  #[serde(default, skip_serializing_if = "Option::is_none", rename = "deletedAt")]
+  deleted_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -311,11 +316,13 @@ fn ensure_board_index_contains(
   if let Some(meta) = index.boards.iter_mut().find(|b| b.id == board_id) {
     meta.name = board_name.to_string();
     meta.updated_at = now_millis();
+    meta.deleted_at = None;
   } else {
     index.boards.push(BoardMeta {
       id: board_id.to_string(),
       name: board_name.to_string(),
       updated_at: now_millis(),
+      deleted_at: None,
     });
   }
   write_index_atomic(paths, &index)?;
@@ -475,7 +482,38 @@ fn rebuild_index_from_fs(paths: &AppPaths) -> Result<BoardIndex, String> {
       id: board_id,
       name,
       updated_at,
+      deleted_at: None,
     });
+  }
+  let trash_dir = paths.root_dir.join("trash");
+  if trash_dir.exists() {
+    let trash_entries = std::fs::read_dir(&trash_dir)
+      .map_err(|e| format!("read trash dir failed: {e}"))?;
+    for entry in trash_entries.flatten() {
+      let path = entry.path();
+      if !path.is_dir() {
+        continue;
+      }
+      let board_id = match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_string(),
+        None => continue,
+      };
+      if !is_valid_board_id(&board_id) {
+        continue;
+      }
+      let board_file = path.join("board.json");
+      if !board_file.exists() {
+        continue;
+      }
+      let name = read_board_name(&board_file).unwrap_or_else(|| board_id.clone());
+      let deleted_at = file_modified_millis(&board_file).unwrap_or_else(now_millis);
+      boards.push(BoardMeta {
+        id: board_id,
+        name,
+        updated_at: deleted_at,
+        deleted_at: Some(deleted_at),
+      });
+    }
   }
   let index = BoardIndex { version: 1, boards };
   write_index_atomic(paths, &index)?;
@@ -486,6 +524,7 @@ fn sync_index_with_fs(paths: &AppPaths, mut index: BoardIndex) -> Result<BoardIn
   ensure_root_dir(paths)?;
   let mut changed = false;
   let mut seen = std::collections::HashSet::new();
+  let mut seen_trash = std::collections::HashSet::new();
 
   let entries = std::fs::read_dir(&paths.root_dir)
     .map_err(|e| format!("read boards dir failed: {e}"))?;
@@ -521,14 +560,69 @@ fn sync_index_with_fs(paths: &AppPaths, mut index: BoardIndex) -> Result<BoardIn
           id: board_id,
           name,
           updated_at,
+          deleted_at: None,
         });
         changed = true;
       }
     }
   }
 
+  let trash_dir = paths.root_dir.join("trash");
+  if trash_dir.exists() {
+    let trash_entries = std::fs::read_dir(&trash_dir)
+      .map_err(|e| format!("read trash dir failed: {e}"))?;
+    for entry in trash_entries.flatten() {
+      let path = entry.path();
+      if !path.is_dir() {
+        continue;
+      }
+      let board_id = match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_string(),
+        None => continue,
+      };
+      if !is_valid_board_id(&board_id) {
+        continue;
+      }
+      let board_file = path.join("board.json");
+      if !board_file.exists() {
+        continue;
+      }
+      seen_trash.insert(board_id.clone());
+      let name = read_board_name(&board_file).unwrap_or_else(|| board_id.clone());
+      let deleted_at = file_modified_millis(&board_file).unwrap_or_else(now_millis);
+      match index.boards.iter_mut().find(|b| b.id == board_id) {
+        Some(meta) => {
+          if meta.name != name
+            || meta.updated_at != deleted_at
+            || meta.deleted_at != Some(deleted_at)
+          {
+            meta.name = name;
+            meta.updated_at = deleted_at;
+            meta.deleted_at = Some(deleted_at);
+            changed = true;
+          }
+        }
+        None => {
+          index.boards.push(BoardMeta {
+            id: board_id,
+            name,
+            updated_at: deleted_at,
+            deleted_at: Some(deleted_at),
+          });
+          changed = true;
+        }
+      }
+    }
+  }
+
   let before_len = index.boards.len();
-  index.boards.retain(|b| seen.contains(&b.id));
+  index.boards.retain(|b| {
+    if b.deleted_at.is_some() {
+      seen_trash.contains(&b.id)
+    } else {
+      seen.contains(&b.id)
+    }
+  });
   if index.boards.len() != before_len {
     changed = true;
   }
@@ -580,7 +674,36 @@ fn open_external_url(url: String) -> Result<(), String> {
 #[tauri::command]
 fn list_boards(paths: tauri::State<'_, AppPaths>) -> Result<Vec<BoardMeta>, String> {
   let index = read_index(&paths)?;
-  Ok(index.boards)
+  Ok(index
+    .boards
+    .into_iter()
+    .filter(|b| b.deleted_at.is_none())
+    .collect())
+}
+
+#[tauri::command]
+fn list_trashed_boards(paths: tauri::State<'_, AppPaths>) -> Result<Vec<BoardMeta>, String> {
+  let mut boards: Vec<BoardMeta> = read_index(&paths)?
+    .boards
+    .into_iter()
+    .filter(|b| b.deleted_at.is_some())
+    .collect();
+  boards.sort_by_key(|b| b.deleted_at.unwrap_or(0));
+  boards.reverse();
+  Ok(boards)
+}
+
+#[tauri::command]
+fn empty_trash(paths: tauri::State<'_, AppPaths>) -> Result<(), String> {
+  let mut index = read_index(&paths)?;
+  index.boards.retain(|b| b.deleted_at.is_none());
+  write_index_atomic(&paths, &index)?;
+
+  let trash_dir = paths.root_dir.join("trash");
+  if trash_dir.exists() {
+    std::fs::remove_dir_all(&trash_dir).map_err(|e| format!("empty trash failed: {e}"))?;
+  }
+  Ok(())
 }
 
 #[tauri::command]
@@ -598,6 +721,7 @@ fn create_board(paths: tauri::State<'_, AppPaths>, name: String) -> Result<Board
     id: board_id,
     name: safe_name.to_string(),
     updated_at: now_millis(),
+    deleted_at: None,
   };
   let mut next = index;
   next.boards.push(meta.clone());
@@ -611,13 +735,54 @@ fn delete_board(paths: tauri::State<'_, AppPaths>, board_id: String) -> Result<(
     return Err("invalid board id".to_string());
   }
   let mut index = read_index(&paths)?;
-  index.boards.retain(|b| b.id != board_id);
+  let mut found = false;
+  for meta in index.boards.iter_mut() {
+    if meta.id == board_id {
+      meta.deleted_at = Some(now_millis());
+      found = true;
+      break;
+    }
+  }
+  if !found {
+    return Err("board not found".to_string());
+  }
   write_index_atomic(&paths, &index)?;
   let board_paths = board_paths(&paths.root_dir, &board_id);
   if board_paths.dir.exists() {
-    std::fs::remove_dir_all(&board_paths.dir)
-      .map_err(|e| format!("delete board failed: {e}"))?;
+    let trash_dir = paths.root_dir.join("trash");
+    std::fs::create_dir_all(&trash_dir)
+      .map_err(|e| format!("create trash dir failed: {e}"))?;
+    let dest = trash_dir.join(&board_id);
+    if dest.exists() {
+      let _ = std::fs::remove_dir_all(&dest);
+    }
+    std::fs::rename(&board_paths.dir, &dest)
+      .map_err(|e| format!("move board to trash failed: {e}"))?;
   }
+  Ok(())
+}
+
+#[tauri::command]
+fn restore_board(paths: tauri::State<'_, AppPaths>, board_id: String) -> Result<(), String> {
+  if !is_valid_board_id(&board_id) {
+    return Err("invalid board id".to_string());
+  }
+  let trash_dir = paths.root_dir.join("trash");
+  let src = trash_dir.join(&board_id);
+  if !src.exists() {
+    return Err("board not found in trash".to_string());
+  }
+  let dest = paths.root_dir.join(&board_id);
+  if dest.exists() {
+    return Err("board already exists".to_string());
+  }
+  std::fs::rename(&src, &dest).map_err(|e| format!("restore board failed: {e}"))?;
+
+  let board_file = dest.join("board.json");
+  let name = read_board_name(&board_file).unwrap_or_else(|| board_id.clone());
+  let mut index = read_index(&paths)?;
+  index = ensure_board_index_contains(&paths, index, &board_id, &name)?;
+  write_index_atomic(&paths, &index)?;
   Ok(())
 }
 
@@ -874,7 +1039,13 @@ fn load_board(paths: tauri::State<'_, AppPaths>, board_id: String) -> Result<Boa
   let text = std::fs::read_to_string(&board_paths.file).map_err(|e| format!("read failed: {e}"))?;
 
   match serde_json::from_str::<Board>(&text) {
-    Ok(board) => Ok(board),
+    Ok(mut board) => {
+      if board.id != board_id {
+        board.id = board_id.clone();
+        write_board_atomic(&board_paths, &board)?;
+      }
+      Ok(board)
+    }
     Err(_) => {
       let board = empty_board(&board_id, name);
       write_board_atomic(&board_paths, &board)?;
@@ -892,10 +1063,21 @@ fn save_board(
   if !is_valid_board_id(&board_id) {
     return Err("invalid board id".to_string());
   }
+  if board.id != board_id {
+    return Err(format!(
+      "board id mismatch (payload {}, expected {})",
+      board.id, board_id
+    ));
+  }
+  let index = read_index(&paths)?;
+  if let Some(meta) = index.boards.iter().find(|b| b.id == board_id) {
+    if meta.deleted_at.is_some() {
+      return Err("board is deleted".to_string());
+    }
+  }
   let board_paths = board_paths(&paths.root_dir, &board_id);
   ensure_board_file(&board_paths, &board_id, &board.name)?;
   write_board_atomic(&board_paths, &board)?;
-  let index = read_index(&paths)?;
   let _ = ensure_board_index_contains(&paths, index, &board_id, &board.name)?;
   Ok(())
 }

@@ -62,6 +62,7 @@ export type BoardMeta = {
   id: string
   name: string
   updatedAt: number
+  deletedAt?: number
 }
 
 export type LinkMetadata = {

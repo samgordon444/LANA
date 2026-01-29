@@ -5,12 +5,24 @@ export async function listBoards(): Promise<BoardMeta[]> {
   return await invoke<BoardMeta[]>('list_boards')
 }
 
+export async function listTrashedBoards(): Promise<BoardMeta[]> {
+  return await invoke<BoardMeta[]>('list_trashed_boards')
+}
+
 export async function createBoard(name: string): Promise<BoardMeta> {
   return await invoke<BoardMeta>('create_board', { name })
 }
 
 export async function deleteBoard(boardId: string): Promise<void> {
   await invoke('delete_board', { boardId })
+}
+
+export async function restoreBoard(boardId: string): Promise<void> {
+  await invoke('restore_board', { boardId })
+}
+
+export async function emptyTrash(): Promise<void> {
+  await invoke('empty_trash')
 }
 
 export async function loadBoard(boardId: string): Promise<Board> {
