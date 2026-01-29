@@ -4,6 +4,7 @@ import { Rnd } from 'react-rnd'
 import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch'
 import { ArrangeVertical, Chat, Close, FitToScreen, Grid, Menu, NewTab, TrashCan } from '@carbon/icons-react'
 import './App.css'
+import assistantAvatar from '../src-tauri/icons/32x32.png'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import {
   createBoard,
@@ -3412,7 +3413,18 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
               {currentChatMessages.map((message) => (
                 <div key={message.id} className={`chatMessage chatMessage--${message.role}`}>
                   {message.role === 'system-note' ? null : (
-                    <div className="chatMessageRole">{message.role}</div>
+                    <div className="chatMessageRole">
+                      {message.role === 'assistant' ? (
+                        <img className="chatMessageRoleAvatar" src={assistantAvatar} alt="" aria-hidden="true" />
+                      ) : null}
+                      <span>
+                        {message.role === 'assistant'
+                          ? 'LANA'
+                          : message.role === 'user'
+                          ? 'User'
+                          : 'System'}
+                      </span>
+                    </div>
                   )}
                   <div className="chatMessageContent">{message.content}</div>
                 </div>
