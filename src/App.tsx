@@ -168,14 +168,6 @@ function linkNoteHeightFromTextarea(el: HTMLTextAreaElement) {
   return Math.max(LINK_NOTE_MIN_HEIGHT, el.scrollHeight)
 }
 
-function linkCardHeightWithNote(card: Pick<LinkCard, 'image'>, noteHeight: number) {
-  return ceilToGrid(linkCardBaseHeight(card) + noteHeight + LINK_NOTE_BORDER_HEIGHT - 4)
-}
-
-function linkCardNoteHeightFromCard(card: LinkCard) {
-  return Math.max(0, card.height - linkCardBaseHeight(card) - LINK_NOTE_BORDER_HEIGHT)
-}
-
 function linkCardHeightFromParts(
   previewEl: HTMLDivElement | null,
   bodyEl: HTMLDivElement | null,
@@ -258,7 +250,6 @@ function normalizeBoard(board: Board): Board {
 }
 
 function cardHeightFromTextarea(el: HTMLTextAreaElement) {
-  const prevHeight = el.style.height
   el.style.height = 'auto'
   const contentHeight = Math.max(MIN_TEXTAREA_HEIGHT, el.scrollHeight)
   // keep the textarea in sync with measured height so scrollHeight stays accurate
@@ -3208,14 +3199,6 @@ function App() {
         `Could not reach Ollama at http://127.0.0.1:11434. ` +
           `Ensure it is running and the model "${chatModel}" is installed. (${detail})`,
       )
-    }
-  }
-
-  function linkHost(url: string): string {
-    try {
-      return new URL(url).host
-    } catch {
-      return url
     }
   }
 
