@@ -9,6 +9,14 @@ export async function listTrashedBoards(): Promise<BoardMeta[]> {
   return await invoke<BoardMeta[]>('list_trashed_boards')
 }
 
+export async function createBackup(destDir: string): Promise<string> {
+  return await invoke<string>('create_backup', { destDir })
+}
+
+export async function cleanupAssets(): Promise<number> {
+  return await invoke<number>('cleanup_assets')
+}
+
 export async function createBoard(name: string): Promise<BoardMeta> {
   return await invoke<BoardMeta>('create_board', { name })
 }

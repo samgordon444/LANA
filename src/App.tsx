@@ -2,12 +2,27 @@ import { nanoid } from 'nanoid'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Rnd } from 'react-rnd'
 import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch'
-import { ArrangeVertical, Chat, Close, FitToScreen, Grid, Menu, NewTab, TrashCan } from '@carbon/icons-react'
+import {
+  ArrangeVertical,
+  Chat,
+  Checkmark,
+  Close,
+  FitToScreen,
+  Grid,
+  Menu,
+  NewTab,
+  Settings,
+  TrashCan,
+} from '@carbon/icons-react'
 import './App.css'
 import assistantAvatar from '../src-tauri/icons/32x32.png'
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { convertFileSrc, isTauri } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { open } from '@tauri-apps/plugin-dialog'
 import {
   createBoard,
+  createBackup,
+  cleanupAssets,
   deleteBoard,
   emptyTrash,
   fetchLinkMetadata,
@@ -74,6 +89,8 @@ const DRAG_OUT_THRESHOLD = GRID_SIZE * 3
 const GROUP_DETACH_PREVIEW_THRESHOLD = GRID_SIZE * 1.5
 const RECENT_BOARDS_KEY = 'lana_recent_boards'
 const LAST_BOARD_KEY = 'lana_last_board_id'
+const BACKUP_ENABLED_KEY = 'lana_backup_enabled'
+const BACKUP_FOLDER_KEY = 'lana_backup_folder'
 
 function snapToGrid(value: number, offset = 0) {
   return Math.round((value - offset) / GRID_SIZE) * GRID_SIZE + offset
@@ -303,6 +320,38 @@ function writeLastBoardId(id: string) {
   }
 }
 
+function readBackupEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(BACKUP_ENABLED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeBackupEnabled(enabled: boolean) {
+  try {
+    window.localStorage.setItem(BACKUP_ENABLED_KEY, enabled ? 'true' : 'false')
+  } catch {
+    // ignore
+  }
+}
+
+function readBackupFolder(): string {
+  try {
+    return window.localStorage.getItem(BACKUP_FOLDER_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function writeBackupFolder(folder: string) {
+  try {
+    window.localStorage.setItem(BACKUP_FOLDER_KEY, folder)
+  } catch {
+    // ignore
+  }
+}
+
 function nextUntitledName(list: BoardMeta[]): string {
   let max = 0
   for (const item of list) {
@@ -342,6 +391,12 @@ type PendingBoardDelete = {
 
 type PendingTrashEmpty = {
   pending: boolean
+}
+
+type UiNotice = {
+  message: string
+  actionLabel?: string
+  onAction?: () => void
 }
 
 function layoutBoard(board: Board): Board {
@@ -827,13 +882,24 @@ function App() {
     return prefersLight ? 'light' : 'dark'
   })
   const [assetsDir, setAssetsDir] = useState<string | null>(null)
-  const [uiNotice, setUiNotice] = useState<string | null>(null)
+  const [uiNotice, setUiNotice] = useState<UiNotice | null>(null)
   const noticeTimerRef = useRef<number | null>(null)
   const [board, setBoard] = useState<Board | null>(null)
   const [boards, setBoards] = useState<BoardMeta[]>([])
   const [trashedBoards, setTrashedBoards] = useState<TrashedBoard[]>([])
   const [pendingBoardDelete, setPendingBoardDelete] = useState<PendingBoardDelete | null>(null)
   const [pendingTrashEmpty, setPendingTrashEmpty] = useState<PendingTrashEmpty | null>(null)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<'backup'>('backup')
+  const [backupEnabled, setBackupEnabled] = useState<boolean>(() => readBackupEnabled())
+  const [backupFolder, setBackupFolder] = useState<string>(() => readBackupFolder())
+  const backupInProgressRef = useRef(false)
+  const backupPromiseRef = useRef<Promise<void> | null>(null)
+  const closingAfterBackupRef = useRef(false)
+  const closeUnlistenRef = useRef<(() => void) | null>(null)
+  const missingBackupNoticeRef = useRef(false)
+  const [isBackupClosing, setIsBackupClosing] = useState(false)
+  const [backupSuccessAt, setBackupSuccessAt] = useState<number | null>(null)
   const [currentBoardId, setCurrentBoardId] = useState<string | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -1063,13 +1129,18 @@ function App() {
     }
   }, [])
 
-  const flashNotice = useCallback((message: string) => {
-    setUiNotice(message)
+  const flashNotice = useCallback((message: string, actionLabel?: string, onAction?: () => void) => {
+    setUiNotice({ message, actionLabel, onAction })
     if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current)
     noticeTimerRef.current = window.setTimeout(() => {
       noticeTimerRef.current = null
       setUiNotice(null)
     }, 4500)
+  }, [])
+
+  const openBackupSettings = useCallback(() => {
+    setSettingsTab('backup')
+    setIsSettingsOpen(true)
   }, [])
 
   const createNewBoard = useCallback(async () => {
@@ -1103,7 +1174,7 @@ function App() {
   )
 
   const removeBoard = useCallback(
-    async (boardId: string, boardName: string) => {
+    async (boardId: string) => {
       const order = sortedBoards.map((b) => b.id)
       const idx = order.indexOf(boardId)
       const nextInOrder =
@@ -1144,9 +1215,9 @@ function App() {
 
   const confirmBoardDelete = useCallback(async () => {
     if (!pendingBoardDelete) return
-    const { id, name } = pendingBoardDelete
+    const { id } = pendingBoardDelete
     setPendingBoardDelete(null)
-    await removeBoard(id, name)
+    await removeBoard(id)
   }, [pendingBoardDelete, removeBoard])
 
   const cancelBoardDelete = useCallback(() => {
@@ -1183,6 +1254,76 @@ function App() {
   const cancelEmptyTrash = useCallback(() => {
     setPendingTrashEmpty(null)
   }, [])
+
+  const chooseBackupFolder = useCallback(async () => {
+    if (!backupEnabled) return
+    try {
+      if (isTauri()) {
+        const selected = await open({ directory: true, multiple: false })
+        if (typeof selected === 'string') {
+          setBackupFolder(selected)
+          return
+        }
+        if (Array.isArray(selected) && selected[0]) {
+          setBackupFolder(selected[0])
+          return
+        }
+      }
+      const manual = window.prompt('Enter backup folder path', backupFolder)
+      if (manual != null) setBackupFolder(manual.trim())
+    } catch (err) {
+      console.error('backup folder picker failed', err)
+    }
+  }, [backupEnabled, backupFolder])
+
+  const runBackup = useCallback(
+    async (reason: 'interval' | 'close' | 'manual') => {
+      if (!backupEnabled || !backupFolder || !isTauri()) return
+      if (backupInProgressRef.current) {
+        if (backupPromiseRef.current) {
+          await backupPromiseRef.current
+        }
+        return
+      }
+      backupInProgressRef.current = true
+      const promise = (async () => {
+        try {
+          await createBackup(backupFolder)
+          if (reason === 'manual') {
+            setBackupSuccessAt(Date.now())
+          }
+        } catch (err) {
+          console.error('backup failed', err)
+          if (backupEnabled && backupFolder) {
+            flashNotice(
+              'unable to save to backup folder',
+              'Open backup settings',
+              () => openBackupSettings(),
+            )
+          }
+          if (reason === 'close') {
+            // allow close to proceed even on failure
+          }
+        }
+      })()
+      backupPromiseRef.current = promise
+      try {
+        await promise
+      } finally {
+        backupInProgressRef.current = false
+        backupPromiseRef.current = null
+      }
+    },
+    [backupEnabled, backupFolder, flashNotice, openBackupSettings],
+  )
+
+  useEffect(() => {
+    if (!backupSuccessAt) return
+    const t = window.setTimeout(() => {
+      setBackupSuccessAt(null)
+    }, 3000)
+    return () => window.clearTimeout(t)
+  }, [backupSuccessAt])
 
   const columnTitleKey = useMemo(() => {
     if (!board) return ''
@@ -1251,6 +1392,62 @@ function App() {
   }, [loadBoardById])
 
   useEffect(() => {
+    if (!backupEnabled || !backupFolder || !isTauri()) return
+    const interval = window.setInterval(() => {
+      void runBackup('interval')
+    }, 10 * 60 * 1000)
+    return () => window.clearInterval(interval)
+  }, [backupEnabled, backupFolder, runBackup])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (!backupEnabled || !backupFolder) return
+        if (closingAfterBackupRef.current) {
+          event.preventDefault()
+          return
+        }
+        event.preventDefault()
+        closingAfterBackupRef.current = true
+        let overlayTimer: number | null = null
+        overlayTimer = window.setTimeout(() => {
+          setIsBackupClosing(true)
+        }, 500)
+        try {
+          await runBackup('close')
+          try {
+            await cleanupAssets()
+          } catch (err) {
+            console.error('asset cleanup failed', err)
+          }
+          if (closeUnlistenRef.current) {
+            closeUnlistenRef.current()
+            closeUnlistenRef.current = null
+          }
+          await getCurrentWindow().destroy()
+        } finally {
+          if (overlayTimer) window.clearTimeout(overlayTimer)
+          setIsBackupClosing(false)
+          closingAfterBackupRef.current = false
+        }
+      })
+      .then((fn) => {
+        closeUnlistenRef.current = fn
+      })
+      .catch((err) => {
+        console.error('close handler failed', err)
+      })
+
+    return () => {
+      if (closeUnlistenRef.current) {
+        closeUnlistenRef.current()
+        closeUnlistenRef.current = null
+      }
+    }
+  }, [backupEnabled, backupFolder, runBackup])
+
+  useEffect(() => {
     if (!board || !currentBoardId) return
 
     const next: Record<string, number> = {}
@@ -1278,6 +1475,29 @@ function App() {
       // ignore
     }
   }, [theme])
+
+  useEffect(() => {
+    writeBackupEnabled(backupEnabled)
+  }, [backupEnabled])
+
+  useEffect(() => {
+    writeBackupFolder(backupFolder)
+  }, [backupFolder])
+
+  useEffect(() => {
+    if (!backupEnabled) {
+      missingBackupNoticeRef.current = false
+      return
+    }
+    if (!backupFolder) {
+      if (!missingBackupNoticeRef.current) {
+        flashNotice('no backup folder chosen, not backing up')
+        missingBackupNoticeRef.current = true
+      }
+      return
+    }
+    missingBackupNoticeRef.current = false
+  }, [backupEnabled, backupFolder, flashNotice])
 
   function setColumnSelectionIds(next: string[]) {
     selectedColumnIdsRef.current = next
@@ -4949,10 +5169,36 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
       </div>
 
       <div className="statusbar">
-        <div className="statusText">
-          Autosaves to <code>~/Documents/LANA/boards/{board.id ?? 'unknown'}/board.json</code>
+        <div className="statusLeft">
+          <button
+            className="zoomPill zoomPill--icon statusSettings"
+            onClick={() => setIsSettingsOpen(true)}
+            aria-label="Open settings"
+            type="button"
+          >
+            <Settings size={16} />
+          </button>
+          <div className="statusText">
+            Autosaves to <code>~/Documents/LANA/boards/{board.id ?? 'unknown'}/board.json</code>
+          </div>
         </div>
-        {uiNotice ? <div className="statusNotice">{uiNotice}</div> : null}
+        {uiNotice ? (
+          <div className="statusNotice">
+            <span>{uiNotice.message}</span>
+            {uiNotice.actionLabel ? (
+              <button
+                className="statusNoticeAction"
+                onClick={() => {
+                  uiNotice.onAction?.()
+                  setUiNotice(null)
+                }}
+                type="button"
+              >
+                {uiNotice.actionLabel}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="statusRight">
           <button
@@ -5066,6 +5312,97 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
                 Empty
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+      {isSettingsOpen ? (
+        <div className="settingsOverlay" role="presentation" onClick={() => setIsSettingsOpen(false)}>
+          <div
+            className="settingsModal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="settingsSidebar">
+              <div className="settingsTitle" id="settings-title">
+                Settings
+              </div>
+              <button
+                className={`settingsTab${settingsTab === 'backup' ? ' is-active' : ''}`}
+                onClick={() => setSettingsTab('backup')}
+                type="button"
+              >
+                Backup
+              </button>
+            </div>
+            <div className="settingsContent">
+              <div className="settingsHeaderRow">
+                <div className="settingsHeader">Backup</div>
+                <button
+                  className="btn btn--icon settingsClose"
+                  onClick={() => setIsSettingsOpen(false)}
+                  aria-label="Close settings"
+                  type="button"
+                >
+                  <Close size={16} />
+                </button>
+              </div>
+              <label className="settingsField settingsField--inline">
+                <input
+                  className="settingsCheckbox"
+                  type="checkbox"
+                  checked={backupEnabled}
+                  onChange={(e) => setBackupEnabled(e.target.checked)}
+                />
+                <span>Enable backups</span>
+              </label>
+              <div className={`settingsField${backupEnabled ? '' : ' is-disabled'}`}>
+                <div className="settingsFieldLabel">Backup folder</div>
+                <div className="settingsFolderRow">
+                  <input
+                    className="settingsInput"
+                    type="text"
+                    value={backupFolder}
+                    onChange={(e) => setBackupFolder(e.target.value)}
+                    placeholder="Choose a folder…"
+                    disabled={!backupEnabled}
+                  />
+                  <button
+                    className="btn settingsFolderButton"
+                    onClick={() => void chooseBackupFolder()}
+                    type="button"
+                    disabled={!backupEnabled}
+                  >
+                    Choose
+                  </button>
+                </div>
+              </div>
+              <div className="settingsHelp">
+                Backups are saved every 10 minutes and when the app closes. Only the most recent 3 backups are kept.
+              </div>
+              <div className="settingsActions">
+                <div className={`backupSuccess${backupSuccessAt ? ' is-visible' : ''}`} aria-hidden="true">
+                  <Checkmark size={16} />
+                </div>
+                <button
+                  className="btn"
+                  onClick={() => void runBackup('manual')}
+                  type="button"
+                  disabled={!backupEnabled || !backupFolder}
+                >
+                  Backup now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {isBackupClosing ? (
+        <div className="modalOverlay" role="presentation">
+          <div className="modal" role="alertdialog" aria-modal="true" aria-live="assertive">
+            <div className="modalTitle">Backing up…</div>
+            <div className="modalBody">Please wait while LANA saves your backup.</div>
           </div>
         </div>
       ) : null}

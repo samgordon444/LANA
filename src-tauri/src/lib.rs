@@ -1,17 +1,22 @@
 use base64::Engine;
+use chrono::Utc;
 use reqwest::header::CONTENT_TYPE;
 use scraper::{Html, Selector};
 use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use url::Url;
+use walkdir::WalkDir;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
       list_boards,
       list_trashed_boards,
+      create_backup,
+      cleanup_assets,
       create_board,
       delete_board,
       empty_trash,
@@ -379,6 +384,28 @@ fn clean_text(value: &str) -> Option<String> {
   }
 }
 
+fn is_backup_filename(name: &str) -> bool {
+  let prefix = "LANA-backup-";
+  let suffix = ".zip";
+  if !name.starts_with(prefix) || !name.ends_with(suffix) {
+    return false;
+  }
+  let ts = &name[prefix.len()..name.len() - suffix.len()];
+  if ts.len() != 15 {
+    return false;
+  }
+  for (i, ch) in ts.chars().enumerate() {
+    if i == 8 {
+      if ch != '-' {
+        return false;
+      }
+    } else if !ch.is_ascii_digit() {
+      return false;
+    }
+  }
+  true
+}
+
 fn meta_content(doc: &Html, selector: &str) -> Option<String> {
   let sel = Selector::parse(selector).ok()?;
   let el = doc.select(&sel).next()?;
@@ -691,6 +718,153 @@ fn list_trashed_boards(paths: tauri::State<'_, AppPaths>) -> Result<Vec<BoardMet
   boards.sort_by_key(|b| b.deleted_at.unwrap_or(0));
   boards.reverse();
   Ok(boards)
+}
+
+#[tauri::command]
+fn cleanup_assets(paths: tauri::State<'_, AppPaths>) -> Result<u32, String> {
+  ensure_root_dir(&paths)?;
+  let mut removed = 0u32;
+  let entries = std::fs::read_dir(&paths.root_dir)
+    .map_err(|e| format!("read boards dir failed: {e}"))?;
+  for entry in entries.flatten() {
+    let path = entry.path();
+    if !path.is_dir() {
+      continue;
+    }
+    let board_id = match path.file_name().and_then(|n| n.to_str()) {
+      Some(name) => name.to_string(),
+      None => continue,
+    };
+    if board_id == "trash" {
+      continue;
+    }
+    if !is_valid_board_id(&board_id) {
+      continue;
+    }
+    let board_file = path.join("board.json");
+    if !board_file.exists() {
+      continue;
+    }
+    let text = match std::fs::read_to_string(&board_file) {
+      Ok(text) => text,
+      Err(_) => continue,
+    };
+    let board: Board = match serde_json::from_str(&text) {
+      Ok(board) => board,
+      Err(_) => continue,
+    };
+    let mut keep: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for card in board.cards {
+      if let Some(src) = card.src {
+        if let Some(name) = src.strip_prefix("assets/") {
+          keep.insert(name.to_string());
+        }
+      }
+      if let Some(image) = card.image {
+        if let Some(name) = image.strip_prefix("assets/") {
+          keep.insert(name.to_string());
+        }
+      }
+    }
+    let assets_dir = path.join("assets");
+    if !assets_dir.exists() {
+      continue;
+    }
+    let assets = match std::fs::read_dir(&assets_dir) {
+      Ok(assets) => assets,
+      Err(_) => continue,
+    };
+    for asset in assets.flatten() {
+      let asset_path = asset.path();
+      if !asset_path.is_file() {
+        continue;
+      }
+      let name = match asset_path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_string(),
+        None => continue,
+      };
+      if !keep.contains(&name) {
+        if std::fs::remove_file(&asset_path).is_ok() {
+          removed += 1;
+        }
+      }
+    }
+  }
+  Ok(removed)
+}
+
+#[tauri::command]
+fn create_backup(paths: tauri::State<'_, AppPaths>, dest_dir: String) -> Result<String, String> {
+  let dest = std::path::PathBuf::from(dest_dir.trim());
+  if dest.as_os_str().is_empty() {
+    return Err("backup folder not set".to_string());
+  }
+  if !dest.exists() {
+    return Err("backup folder does not exist".to_string());
+  }
+  if !dest.is_dir() {
+    return Err("backup folder is not a directory".to_string());
+  }
+  if dest.starts_with(&paths.root_dir) {
+    return Err("backup folder must be outside boards directory".to_string());
+  }
+
+  let timestamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
+  let filename = format!("LANA-backup-{timestamp}.zip");
+  let out_path = dest.join(&filename);
+
+  let file = std::fs::File::create(&out_path).map_err(|e| format!("create backup failed: {e}"))?;
+  let mut zip = zip::ZipWriter::new(file);
+  let options = zip::write::FileOptions::default()
+    .compression_method(zip::CompressionMethod::Deflated)
+    .unix_permissions(0o644);
+
+  for entry in WalkDir::new(&paths.root_dir)
+    .into_iter()
+    .filter_map(Result::ok)
+    .filter(|e| e.file_type().is_file())
+  {
+    let path = entry.path();
+    let rel = match path.strip_prefix(&paths.root_dir) {
+      Ok(rel) => rel,
+      Err(_) => continue,
+    };
+    if rel.as_os_str().is_empty() {
+      continue;
+    }
+    let name = rel.to_string_lossy().replace('\\', "/");
+    let mut input = std::fs::File::open(path).map_err(|e| format!("zip open failed: {e}"))?;
+    zip
+      .start_file(name, options)
+      .map_err(|e| format!("zip start failed: {e}"))?;
+    std::io::copy(&mut input, &mut zip).map_err(|e| format!("zip write failed: {e}"))?;
+  }
+  zip.finish().map_err(|e| format!("zip finish failed: {e}"))?;
+
+  let mut backups: Vec<(String, std::path::PathBuf)> = Vec::new();
+  if let Ok(entries) = std::fs::read_dir(&dest) {
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if !path.is_file() {
+        continue;
+      }
+      let name = match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_string(),
+        None => continue,
+      };
+      if is_backup_filename(&name) {
+        backups.push((name, path));
+      }
+    }
+  }
+  backups.sort_by(|a, b| a.0.cmp(&b.0));
+  if backups.len() > 3 {
+    for (_, path) in backups.iter().take(backups.len() - 3) {
+      let _ = std::fs::remove_file(path);
+    }
+  }
+
+  Ok(filename)
 }
 
 #[tauri::command]
