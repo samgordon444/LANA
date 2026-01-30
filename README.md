@@ -38,7 +38,7 @@ To build app:
 
 ## Local chat (Ollama)
 
-Chat uses a local Ollama server. Default model is `llama3.2:3b` (editable in the chat header).
+Chat uses a local Ollama server. Default model is `llama3.2:3b` (editable in the chat settings).
 
 Quick setup:
 
