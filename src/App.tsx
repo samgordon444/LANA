@@ -3680,7 +3680,10 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
       <div className={`chatPanel${isChatOpen ? ' chatPanel--open' : ''}`}>
         <div className="chatHeader">
           <div className="chatHeaderLeft">
-            <div className="chatTitle">Board chat</div>
+            <div className="chatTitle">
+              <img className="chatTitleAvatar" src={assistantAvatar} alt="" aria-hidden="true" />
+              <span>Chat with LANA</span>
+            </div>
             <input
               className="chatModelInput"
               value={chatModel}
