@@ -11,7 +11,9 @@ import {
   Grid,
   Menu,
   NewTab,
+  RightPanelClose,
   Settings,
+  SettingsAdjust,
   TrashCan,
 } from '@carbon/icons-react'
 import './App.css'
@@ -890,7 +892,7 @@ function App() {
   const [pendingBoardDelete, setPendingBoardDelete] = useState<PendingBoardDelete | null>(null)
   const [pendingTrashEmpty, setPendingTrashEmpty] = useState<PendingTrashEmpty | null>(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [settingsTab, setSettingsTab] = useState<'backup'>('backup')
+  const [settingsTab, setSettingsTab] = useState<'backup' | 'chat'>('backup')
   const [backupEnabled, setBackupEnabled] = useState<boolean>(() => readBackupEnabled())
   const [backupFolder, setBackupFolder] = useState<string>(() => readBackupFolder())
   const backupInProgressRef = useRef(false)
@@ -1140,6 +1142,11 @@ function App() {
 
   const openBackupSettings = useCallback(() => {
     setSettingsTab('backup')
+    setIsSettingsOpen(true)
+  }, [])
+
+  const openChatSettings = useCallback(() => {
+    setSettingsTab('chat')
     setIsSettingsOpen(true)
   }, [])
 
@@ -3681,64 +3688,49 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
         <div className="chatHeader">
           <div className="chatHeaderLeft">
             <div className="chatTitle">
-              <img className="chatTitleAvatar" src={assistantAvatar} alt="" aria-hidden="true" />
               <span>Chat with LANA</span>
             </div>
-            <input
-              className="chatModelInput"
-              value={chatModel}
-              onChange={(e) => setChatModel(e.target.value)}
-              spellCheck={false}
-            />
           </div>
           <button
-            className="btn btn--icon chatClose"
-            onClick={() => setIsChatOpen(false)}
-            aria-label="Close board chat"
+            className="zoomPill zoomPill--icon chatSettings"
+            onClick={openChatSettings}
+            aria-label="Open chat settings"
             type="button"
           >
-            <Close size={18} />
+            <SettingsAdjust size={16} />
           </button>
         </div>
         <div className="chatBody">
           {currentChatMessages.length === 0 ? (
             <div className="chatEmpty">
-              <div className="chatEmptyTitle">Ask about this board</div>
-              <div className="chatEmptyBody">
-                This uses a local Ollama model. Try a quick summary or ask specific questions about cards and lists.
-              </div>
-              <div className="chatEmptyActions">
-                <button className="btn" onClick={() => void sendChatMessage('Summarize this board.')} type="button">
-                  Summarize board
-                </button>
-                <button className="btn" onClick={() => void sendChatMessage('List action items.')} type="button">
-                  List action items
-                </button>
-              </div>
-              <button
-                className="chatInstall"
-                onClick={() => openLink('https://ollama.com')}
-                type="button"
-              >
-                Need Ollama? Open install page
-              </button>
+              {chatModel.trim() ? (
+                <div className="chatEmptyActions">
+                  <button className="btn" onClick={() => void sendChatMessage('Summarize this board.')} type="button">
+                    Summarize board
+                  </button>
+                  <button className="btn" onClick={() => void sendChatMessage('List action items.')} type="button">
+                    List action items
+                  </button>
+                </div>
+              ) : (
+                <div className="chatEmptyTitle">
+                  Choose a model in{' '}
+                  <button className="chatEmptyLink" onClick={openChatSettings} type="button">
+                    Chat Settings
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="chatMessages">
               {currentChatMessages.map((message) => (
                 <div key={message.id} className={`chatMessage chatMessage--${message.role}`}>
-                  {message.role === 'system-note' ? null : (
+                  {message.role === 'system-note' || message.role === 'user' ? null : (
                     <div className="chatMessageRole">
                       {message.role === 'assistant' ? (
                         <img className="chatMessageRoleAvatar" src={assistantAvatar} alt="" aria-hidden="true" />
                       ) : null}
-                      <span>
-                        {message.role === 'assistant'
-                          ? 'LANA'
-                          : message.role === 'user'
-                          ? 'User'
-                          : 'System'}
-                      </span>
+                      <span>{message.role === 'assistant' ? 'LANA' : 'System'}</span>
                     </div>
                   )}
                   <div className="chatMessageContent">{message.content}</div>
@@ -3758,8 +3750,9 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
         >
           <textarea
             className="chatInput"
-            placeholder="Ask about the board…"
+            placeholder={chatModel.trim() ? 'Ask about the board…' : 'Choose a model in Chat Settings'}
             value={currentChatInput}
+            disabled={!chatModel.trim()}
             onChange={(e) => {
               if (!currentBoardId) return
               setChatInputByBoard((prev) => ({ ...prev, [currentBoardId]: e.target.value }))
@@ -3774,7 +3767,9 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
           <button
             className="btn chatSend"
             type="submit"
-            disabled={!currentChatInput.trim() || chatStatus === 'sending' || !currentBoardId}
+            disabled={
+              !chatModel.trim() || !currentChatInput.trim() || chatStatus === 'sending' || !currentBoardId
+            }
           >
             Send
           </button>
@@ -3821,7 +3816,7 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
             aria-expanded={isChatOpen}
             type="button"
           >
-            <Chat size={20} />
+            {isChatOpen ? <RightPanelClose size={20} /> : <Chat size={20} />}
           </button>
         </div>
       </div>
@@ -5338,10 +5333,17 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
               >
                 Backup
               </button>
+              <button
+                className={`settingsTab${settingsTab === 'chat' ? ' is-active' : ''}`}
+                onClick={() => setSettingsTab('chat')}
+                type="button"
+              >
+                Chat
+              </button>
             </div>
             <div className="settingsContent">
               <div className="settingsHeaderRow">
-                <div className="settingsHeader">Backup</div>
+                <div className="settingsHeader">{settingsTab === 'backup' ? 'Backup' : 'Chat'}</div>
                 <button
                   className="btn btn--icon settingsClose"
                   onClick={() => setIsSettingsOpen(false)}
@@ -5351,52 +5353,81 @@ function formatChatEntriesForSummary(entries: ChatEntry[]) {
                   <Close size={16} />
                 </button>
               </div>
-              <label className="settingsField settingsField--inline">
-                <input
-                  className="settingsCheckbox"
-                  type="checkbox"
-                  checked={backupEnabled}
-                  onChange={(e) => setBackupEnabled(e.target.checked)}
-                />
-                <span>Enable backups</span>
-              </label>
-              <div className={`settingsField${backupEnabled ? '' : ' is-disabled'}`}>
-                <div className="settingsFieldLabel">Backup folder</div>
-                <div className="settingsFolderRow">
-                  <input
-                    className="settingsInput"
-                    type="text"
-                    value={backupFolder}
-                    onChange={(e) => setBackupFolder(e.target.value)}
-                    placeholder="Choose a folder…"
-                    disabled={!backupEnabled}
-                  />
-                  <button
-                    className="btn settingsFolderButton"
-                    onClick={() => void chooseBackupFolder()}
-                    type="button"
-                    disabled={!backupEnabled}
-                  >
-                    Choose
-                  </button>
-                </div>
-              </div>
-              <div className="settingsHelp">
-                Backups are saved every 10 minutes and when the app closes. Only the most recent 3 backups are kept.
-              </div>
-              <div className="settingsActions">
-                <div className={`backupSuccess${backupSuccessAt ? ' is-visible' : ''}`} aria-hidden="true">
-                  <Checkmark size={16} />
-                </div>
-                <button
-                  className="btn"
-                  onClick={() => void runBackup('manual')}
-                  type="button"
-                  disabled={!backupEnabled || !backupFolder}
-                >
-                  Backup now
-                </button>
-              </div>
+              {settingsTab === 'backup' ? (
+                <>
+                  <label className="settingsField settingsField--inline">
+                    <input
+                      className="settingsCheckbox"
+                      type="checkbox"
+                      checked={backupEnabled}
+                      onChange={(e) => setBackupEnabled(e.target.checked)}
+                    />
+                    <span>Enable backups</span>
+                  </label>
+                  <div className={`settingsField${backupEnabled ? '' : ' is-disabled'}`}>
+                    <div className="settingsFieldLabel">Backup folder</div>
+                    <div className="settingsFolderRow">
+                      <input
+                        className="settingsInput"
+                        type="text"
+                        value={backupFolder}
+                        onChange={(e) => setBackupFolder(e.target.value)}
+                        placeholder="Choose a folder…"
+                        disabled={!backupEnabled}
+                      />
+                      <button
+                        className="btn settingsFolderButton"
+                        onClick={() => void chooseBackupFolder()}
+                        type="button"
+                        disabled={!backupEnabled}
+                      >
+                        Choose
+                      </button>
+                    </div>
+                  </div>
+                  <div className="settingsHelp">
+                    Backups are saved every 10 minutes and when the app closes. Only the most recent 3 backups are kept.
+                  </div>
+                  <div className="settingsActions">
+                    <div className={`backupSuccess${backupSuccessAt ? ' is-visible' : ''}`} aria-hidden="true">
+                      <Checkmark size={16} />
+                    </div>
+                    <button
+                      className="btn"
+                      onClick={() => void runBackup('manual')}
+                      type="button"
+                      disabled={!backupEnabled || !backupFolder}
+                    >
+                      Backup now
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="settingsHelp settingsHelp--block">
+                    <p>
+                      LANA chat is powered by Ollama, an open source LLM server. This keeps conversations local to your
+                      computer and sidesteps the need for paid API keys.
+                    </p>
+                    <p>
+                      Visit <button className="settingsInlineLink" onClick={() => openLink('https://ollama.com')} type="button">ollama.com</button> to download the app and install your preferred model. Type the model name into the field below exactly as it appears in Ollama.
+                    </p>
+                    <p>LANA will look for that model name served by Ollama at http://localhost:11434</p>
+                  </div>
+                  <div className="settingsField">
+                    <div className="settingsFieldLabel">Model</div>
+                    <input
+                      className="settingsInput"
+                      value={chatModel}
+                      onChange={(e) => setChatModel(e.target.value)}
+                      spellCheck={false}
+                    />
+                  </div>
+                  <div className="settingsHelp">
+                    This should match an installed Ollama model name on your machine.
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

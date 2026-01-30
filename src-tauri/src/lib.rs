@@ -384,6 +384,62 @@ fn clean_text(value: &str) -> Option<String> {
   }
 }
 
+fn percent_decode(input: &str) -> String {
+  let mut out = String::with_capacity(input.len());
+  let bytes = input.as_bytes();
+  let mut i = 0;
+  while i < bytes.len() {
+    if bytes[i] == b'%' && i + 2 < bytes.len() {
+      let hex = &input[i + 1..i + 3];
+      if let Ok(val) = u8::from_str_radix(hex, 16) {
+        out.push(val as char);
+        i += 3;
+        continue;
+      }
+    }
+    if bytes[i] == b'+' {
+      out.push(' ');
+    } else {
+      out.push(bytes[i] as char);
+    }
+    i += 1;
+  }
+  out
+}
+
+fn google_maps_title(url: &Url) -> Option<String> {
+  let host = url.host_str()?.to_ascii_lowercase();
+  if !host.contains("google.") {
+    return None;
+  }
+
+  if let Some(query) = url.query() {
+    for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+      if key == "q" || key == "query" {
+        let decoded = value.to_string();
+        if !decoded.trim().is_empty() {
+          return Some(decoded);
+        }
+      }
+    }
+  }
+
+  let path = url.path();
+  let candidates = ["/maps/place/", "/place/"];
+  for prefix in candidates {
+    if let Some(idx) = path.find(prefix) {
+      let rest = &path[idx + prefix.len()..];
+      let segment = rest.split('/').next().unwrap_or("");
+      let decoded = percent_decode(segment);
+      let cleaned = decoded.replace('+', " ").trim().to_string();
+      if !cleaned.is_empty() {
+        return Some(cleaned);
+      }
+    }
+  }
+  None
+}
+
 fn is_backup_filename(name: &str) -> bool {
   let prefix = "LANA-backup-";
   let suffix = ".zip";
@@ -979,12 +1035,15 @@ async fn fetch_link_metadata(
   }
 
   let client = reqwest::Client::builder()
-    .user_agent("LANA/0.1")
+    .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
     .build()
     .map_err(|e| format!("http client failed: {e}"))?;
 
   let resp = client
     .get(parsed.clone())
+    .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+    .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+    .header(reqwest::header::ACCEPT_ENCODING, "gzip, deflate, br")
     .send()
     .await
     .map_err(|e| format!("fetch failed: {e}"))?;
@@ -994,11 +1053,18 @@ async fn fetch_link_metadata(
 
   let (title, site_name, image_url) = {
     let doc = Html::parse_document(&text);
-    let title = meta_content(&doc, "meta[property='og:title']")
+    let mut title = meta_content(&doc, "meta[property='og:title']")
       .or_else(|| meta_content(&doc, "meta[name='twitter:title']"))
+      .or_else(|| meta_content(&doc, "meta[name='title']"))
+      .or_else(|| meta_content(&doc, "meta[itemprop='name']"))
       .or_else(|| title_text(&doc))
       .or_else(|| final_url.host_str().map(|h| h.to_string()))
       .unwrap_or_else(|| "Link".to_string());
+    if title == "Google Maps" || title == "Link" {
+      if let Some(map_title) = google_maps_title(&final_url) {
+        title = map_title;
+      }
+    }
 
     let site_name = meta_content(&doc, "meta[property='og:site_name']")
       .or_else(|| final_url.host_str().map(|h| h.to_string()));

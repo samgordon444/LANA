@@ -305,9 +305,10 @@
 
 .chatHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  padding: 14px;
+  height: 56px;
+  padding: 0 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(20, 26, 38, 0.7);
   backdrop-filter: blur(10px);
@@ -316,22 +317,15 @@
 .chatHeaderLeft {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  justify-content: center;
 }
 
 .chatTitle {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.chatTitleAvatar {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  object-fit: cover;
 }
 
 .chatModelInput {
@@ -398,16 +392,17 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: 12px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: rgba(255, 255, 255, 0.5);
+  color: #666666;
   margin-bottom: 4px;
 }
 
 .chatMessageRoleAvatar {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -477,6 +472,19 @@
   font-weight: 600;
 }
 
+.chatEmptyLink {
+  border: none;
+  background: transparent;
+  color: rgba(80, 150, 220, 0.95);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.chatEmptyLink:hover {
+  color: rgba(80, 150, 220, 1);
+}
+
 .chatEmptyBody {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.7);
@@ -485,8 +493,13 @@
 
 .chatEmptyActions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.chatEmptyActions .btn {
+  width: 100%;
 }
 
 .chatInstall {
@@ -614,8 +627,8 @@
 }
 
 .settingsModal {
-  width: min(720px, 100%);
-  max-height: min(560px, 90vh);
+  width: 60vw;
+  height: 60vh;
   display: grid;
   grid-template-columns: 180px 1fr;
   background: rgba(16, 21, 32, 0.98);
@@ -663,6 +676,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  overflow: auto;
 }
 
 .settingsHeaderRow {
@@ -737,6 +751,39 @@
 .settingsHelp {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.55);
+}
+
+.settingsHelp--block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  line-height: 1.5;
+  font-size: 16px;
+}
+
+.settingsHelp--block p {
+  margin: 0;
+}
+
+.settingsInlineLink {
+  border: none;
+  background: transparent;
+  color: rgba(80, 150, 220, 0.95);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.settingsInlineLink:hover {
+  color: rgba(80, 150, 220, 1);
+}
+
+.theme-light .settingsInlineLink {
+  color: rgba(20, 90, 200, 0.9);
+}
+
+.theme-light .settingsInlineLink:hover {
+  color: rgba(20, 90, 200, 1);
 }
 
 .settingsActions {
