@@ -1,6 +1,8 @@
 # LANA
 
-A whiteboard built with **Tauri + React + TypeScript + Vite**.
+A notes app with chat assistant, built as a weekend project to test out Codex
+
+![LANA screenshot](lana-screenshot.png)
 
 ## Highlights
 
