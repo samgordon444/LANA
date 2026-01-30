@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LANA — Visual boards for fast thinking</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Space+Grotesk:wght@400;500;600&display=swap');
+
+      :root {
+        color-scheme: light;
+        --bg: #f5f2ea;
+        --bg-accent: #f0e8d9;
+        --ink: #1c1a17;
+        --ink-soft: rgba(28, 26, 23, 0.68);
+        --accent: #2a6f62;
+        --accent-dark: #1f544b;
+        --ring: rgba(42, 111, 98, 0.25);
+        --card: rgba(255, 255, 255, 0.7);
+        --card-border: rgba(28, 26, 23, 0.12);
+        --shadow: 0 24px 60px rgba(28, 26, 23, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(42, 111, 98, 0.12), transparent 50%),
+          radial-gradient(circle at 80% 10%, rgba(230, 180, 80, 0.18), transparent 55%),
+          linear-gradient(180deg, var(--bg), var(--bg-accent));
+      }
+
+      main {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 80px 24px 96px;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(28, 26, 23, 0.18);
+        background: rgba(255, 255, 255, 0.65);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 600;
+        color: rgba(28, 26, 23, 0.6);
+      }
+
+      h1 {
+        font-family: 'Fraunces', serif;
+        font-size: clamp(42px, 8vw, 64px);
+        line-height: 1.05;
+        margin: 0;
+      }
+
+      .subtitle {
+        font-size: 18px;
+        line-height: 1.6;
+        color: var(--ink-soft);
+        margin: 0;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--card-border);
+        border-radius: 24px;
+        padding: 24px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
+
+      .features {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 12px;
+      }
+
+      .features li {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        font-size: 16px;
+        line-height: 1.5;
+      }
+
+      .features li::before {
+        content: '●';
+        font-size: 12px;
+        margin-top: 6px;
+        color: var(--accent);
+      }
+
+      .cta {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 14px 22px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: white;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 15px;
+        letter-spacing: 0.01em;
+        box-shadow: 0 12px 28px rgba(42, 111, 98, 0.28);
+        transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+      }
+
+      .cta:hover {
+        background: var(--accent-dark);
+        transform: translateY(-1px);
+        box-shadow: 0 16px 34px rgba(42, 111, 98, 0.32);
+      }
+
+      .footer {
+        font-size: 13px;
+        color: rgba(28, 26, 23, 0.5);
+        margin-top: 8px;
+      }
+
+      @media (max-width: 640px) {
+        main {
+          padding: 60px 18px 80px;
+        }
+
+        .card {
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="pill">Mac Desktop App</span>
+      <h1>LANA</h1>
+      <p class="subtitle">
+        A fast, local-first board for thinking in cards, lists, and links. Capture ideas, map connections, and ask LANA
+        to summarize the whole board.
+      </p>
+
+      <div class="card">
+        <ul class="features">
+          <li>Infinite canvas with drag, resize, and snap-to-grid placement.</li>
+          <li>Mix text, links, and images with auto previews and notes.</li>
+          <li>Local LLM chat that summarizes boards and surfaces action items.</li>
+          <li>Autosave + history so you can move fast without losing work.</li>
+          <li>Optional backups to a folder of your choice.</li>
+        </ul>
+      </div>
+
+      <a class="cta" href="#">
+        Download for macOS
+      </a>
+
+      <div class="footer">Replace the download link once the .dmg is ready.</div>
+    </main>
+  </body>
+</html>
