@@ -1,6 +1,6 @@
 # LANA
 
-A notes app with chat assistant, built as a weekend project to test out Codex
+A notes app with chat assistant, built as a weekend project to try Codex.
 
 ![LANA screenshot](lana-screenshot.png)
 
