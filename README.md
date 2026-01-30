@@ -10,6 +10,7 @@ A whiteboard built with **Tauri + React + TypeScript + Vite**.
 - Per-board local chat via Ollama (rolling summary + recent messages context)
 - Fast pan/zoom board with grid snapping
 - Light/dark mode
+- Local backups manager
 
 ## Storage
 
