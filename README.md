@@ -2,6 +2,8 @@
 
 A whiteboard built with **Tauri + React + TypeScript + Vite**.
 
+## → [Donwload LANA for Mac](https://github.com/samgordon444/LANA/releases/download/v0.1.0/LANA.app.zip)
+
 ## Highlights
 
 - Multi-board workspace with autosave to disk
