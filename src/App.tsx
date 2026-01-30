@@ -261,10 +261,10 @@ function normalizeBoard(board: Board): Board {
     columns: columns.map((c) => ({
       id: c.id,
       name: typeof (c as Column).name === 'string' ? (c as Column).name : 'List',
-      x: c.x,
-      y: c.y,
-      width: c.width,
-      gap: c.gap,
+      x: snapToGrid(typeof c.x === 'number' && Number.isFinite(c.x) ? c.x : 0, GRID_OFFSET),
+      y: snapToGrid(typeof c.y === 'number' && Number.isFinite(c.y) ? c.y : 0, GRID_OFFSET),
+      width: typeof c.width === 'number' && Number.isFinite(c.width) ? c.width : CARD_WIDTH,
+      gap: typeof c.gap === 'number' && Number.isFinite(c.gap) ? c.gap : COLUMN_GAP,
       cardIds: Array.isArray(c.cardIds) ? c.cardIds : [],
     })),
     cards: board.cards.map(normalizeCard),
@@ -902,6 +902,7 @@ function App() {
   const missingBackupNoticeRef = useRef(false)
   const [isBackupClosing, setIsBackupClosing] = useState(false)
   const [backupSuccessAt, setBackupSuccessAt] = useState<number | null>(null)
+  const layoutResetPendingRef = useRef(false)
   const [currentBoardId, setCurrentBoardId] = useState<string | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -1092,6 +1093,29 @@ function App() {
         .catch(() => {
           setAssetsDir(null)
         })
+
+      layoutResetPendingRef.current = true
+      const wrapper = transformRef.current?.instance.wrapperComponent ?? panZoomEl
+      if (wrapper) {
+        const scale = 1
+        const x = wrapper.clientWidth / 2 - BOARD_START_X * scale
+        const y = wrapper.clientHeight / 2 - BOARD_START_Y * scale
+        commitTransform(x, y, scale, 0)
+        layoutResetPendingRef.current = false
+      } else {
+        window.requestAnimationFrame(() => {
+          const nextWrapper = transformRef.current?.instance.wrapperComponent ?? panZoomEl
+          if (!nextWrapper) {
+            layoutResetPendingRef.current = false
+            return
+          }
+          const scale = 1
+          const x = nextWrapper.clientWidth / 2 - BOARD_START_X * scale
+          const y = nextWrapper.clientHeight / 2 - BOARD_START_Y * scale
+          commitTransform(x, y, scale, 0)
+          layoutResetPendingRef.current = false
+        })
+      }
 
       const loaded = await loadBoard(boardId)
       const normalized = normalizeBoard(loaded)
@@ -1341,9 +1365,26 @@ function App() {
     return columnHeaderHeights[colId] ?? COLUMN_HEADER_HEIGHT
   }
 
+  function getColumnTitleMeasureEl() {
+    let el = columnTitleMeasureElRef.current
+    if (el) return el
+    el = document.createElement('div')
+    el.className = 'columnTitle'
+    el.style.position = 'absolute'
+    el.style.left = '-10000px'
+    el.style.top = '-10000px'
+    el.style.visibility = 'hidden'
+    el.style.pointerEvents = 'none'
+    el.style.whiteSpace = 'normal'
+    el.style.wordBreak = 'break-word'
+    el.style.lineHeight = '1.2'
+    document.body.appendChild(el)
+    columnTitleMeasureElRef.current = el
+    return el
+  }
+
   function measureColumnHeaderHeight(title: string) {
-    const el = columnTitleMeasureElRef.current
-    if (!el) return COLUMN_HEADER_HEIGHT
+    const el = getColumnTitleMeasureEl()
     el.textContent = title || 'List'
     // Column widget width is CARD_WIDTH + 2*COLUMN_PADDING, header has 0 10px padding.
     el.style.width = `${CARD_WIDTH + COLUMN_PADDING * 2 - 20}px`
@@ -1380,23 +1421,13 @@ function App() {
   }
 
   useEffect(() => {
-    const el = document.createElement('div')
-    el.className = 'columnTitle'
-    el.style.position = 'absolute'
-    el.style.left = '-10000px'
-    el.style.top = '-10000px'
-    el.style.visibility = 'hidden'
-    el.style.pointerEvents = 'none'
-    el.style.whiteSpace = 'normal'
-    el.style.wordBreak = 'break-word'
-    el.style.lineHeight = '1.2'
-    document.body.appendChild(el)
-    columnTitleMeasureElRef.current = el
     return () => {
-      columnTitleMeasureElRef.current = null
-      el.remove()
+      if (columnTitleMeasureElRef.current) {
+        columnTitleMeasureElRef.current.remove()
+        columnTitleMeasureElRef.current = null
+      }
     }
-  }, [loadBoardById])
+  }, [])
 
   useEffect(() => {
     if (!backupEnabled || !backupFolder || !isTauri()) return
@@ -2521,6 +2552,7 @@ function App() {
   // After render, ensure card heights match their text content (and fixed width).
   useEffect(() => {
     if (!board) return
+    if (layoutResetPendingRef.current) return
 
     // Only run this after the DOM has painted with the latest text values.
     const t = window.requestAnimationFrame(() => {
@@ -2557,6 +2589,7 @@ function App() {
   // After render, ensure link card heights match their rendered content.
   useEffect(() => {
     if (!board) return
+    if (layoutResetPendingRef.current) return
 
     const t = window.requestAnimationFrame(() => {
       setBoard((prev) => {
@@ -2598,6 +2631,7 @@ function App() {
   // After render, ensure image card heights match their rendered content.
   useEffect(() => {
     if (!board) return
+    if (layoutResetPendingRef.current) return
 
     const t = window.requestAnimationFrame(() => {
       setBoard((prev) => {
@@ -2641,6 +2675,7 @@ function App() {
     if (!board) return
     if (!board.columns.length) return
     if (isCardInteracting) return
+    if (layoutResetPendingRef.current) return
 
     setBoard((prev) => {
       if (!prev) return prev
